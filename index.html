@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>برنامج الحسابات</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box}
 :root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -50,15 +51,21 @@ h3{margin:14px 0 6px}
 <span class="sp"></span>
 <button class="l" onclick="window.print()">طباعة</button>
 <button class="l" id="exp">نسخة احتياطية</button>
-<label class="btn l" style="flex-direction:row">استعادة نسخة<input type="file" id="imp" accept=".json" hidden></label>
+<label class="btn l" style="flex-direction:row" id="impl">استيراد نسخة قديمة<input type="file" id="imp" accept=".json" hidden></label>
+<span id="st" style="font-size:13px"></span><span id="who" style="font-size:13px;color:#4f5b69"></span><button class="l" id="out" hidden>خروج</button>
 </header>
 <nav id="nav"></nav>
 <main id="main"></main>
 <script>
-const KEY='accounts_v1',$=s=>document.querySelector(s);
-const def=()=>({company:'الرائد للإنشاءات والمقاولات العامة',lists:{projects:['B-1','B-2','عام الشركة'],items:['مواد','عمالة','مقاولين من الباطن','معدات ونقل','مرتبات','مصروفات إدارية','أخرى'],parties:[],employees:[]},data:{},seq:1});
-let S;try{S=JSON.parse(localStorage.getItem(KEY))||def()}catch(e){S=def()}
-const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
+// ====== إعدادات Supabase: ضع القيمتين هنا ======
+const SUPABASE_URL='https://dmrucuvypkulkvjgelkx.supabase.co';
+const SUPABASE_KEY='sb_publishable_sgCmFx3PrHdaBbI4NjRq9A_NXY400zD';
+// ===============================================
+const $=s=>document.querySelector(s);
+const sb=(window.supabase&&/^https?:\/\//.test(SUPABASE_URL))?supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
+const KINDS=['treasury','invoices','custody','payroll','cheques','assign'];
+let S={company:'الرائد للإنشاءات والمقاولات العامة',lists:{projects:['B-1','B-2','عام الشركة'],items:['مواد','عمالة','مقاولين من الباطن','معدات ونقل','مرتبات','مصروفات إدارية','أخرى'],parties:[],employees:[]},opts:{},data:{}};
+KINDS.forEach(k=>S.data[k]=[]);
 const N=v=>parseFloat(String(v||0).replace(/,/g,''))||0;
 const fmt=v=>typeof v==='number'?v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):(v??'');
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
@@ -66,6 +73,29 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 const norm=t=>String(t||'').toLowerCase().replace(/[أإآ]/g,'ا').replace(/ة/g,'ه').replace(/ى/g,'ي').replace(/[\u064b-\u0652ـ]/g,'');
 const sum=(a,f)=>a.reduce((s,x)=>s+(+f(x)||0),0);
 const D=k=>S.data[k]||(S.data[k]=[]);
+const fail=e=>alert('تعذر الحفظ: '+((e&&e.message)||e));
+
+// ---------- قاعدة البيانات المشتركة ----------
+const toRow=r=>({...r.data,id:r.id,_t:Date.parse(r.created_at)});
+function upsertLocal(r){const a=D(r.kind),x=toRow(r),i=a.findIndex(y=>y.id===x.id);i<0?a.push(x):a[i]=x}
+function removeLocal(id){for(const k in S.data)S.data[k]=S.data[k].filter(y=>y.id!==id)}
+function applySetting(r){if(r.key==='company')S.company=r.value.v;else if(r.key==='lists')S.lists={...S.lists,...r.value};else if(r.key==='opts')S.opts=r.value||{}}
+const setS=(key,value)=>sb.from('settings').upsert({key,value}).then(r=>{if(r.error)fail(r.error)});
+async function dbIns(kind,o){const r=await sb.from('records').insert({kind,data:o}).select().single();if(r.error)throw r.error;upsertLocal(r.data)}
+async function dbUpd(id,o){const r=await sb.from('records').update({data:o,updated_at:new Date().toISOString()}).eq('id',id).select().single();if(r.error)throw r.error;upsertLocal(r.data)}
+async function dbDel(id){const r=await sb.from('records').delete().eq('id',id);if(r.error)throw r.error;removeLocal(id)}
+async function loadAll(){
+ const st=await sb.from('settings').select('*');if(st.error)throw st.error;st.data.forEach(applySetting);
+ KINDS.forEach(k=>S.data[k]=[]);
+ for(let from=0;;from+=1000){const r=await sb.from('records').select('id,kind,data,created_at').order('created_at').range(from,from+999);if(r.error)throw r.error;r.data.forEach(upsertLocal);if(r.data.length<1000)break}}
+let chan=null;
+function live(){
+ if(chan)return;
+ chan=sb.channel('live')
+  .on('postgres_changes',{event:'*',schema:'public',table:'records'},p=>{if(p.eventType==='DELETE')removeLocal(p.old.id);else upsertLocal(p.new);refreshView()})
+  .on('postgres_changes',{event:'*',schema:'public',table:'settings'},p=>{if(p.new&&p.new.key){applySetting(p.new);head();if(cur!=='lists')refreshView()}})
+  .subscribe(s=>{$('#st').textContent=s==='SUBSCRIBED'?'● مباشر':'○ غير متصل';$('#st').style.color=s==='SUBSCRIBED'?'#1b6b3a':'#b00020'})}
+function refreshView(){const c=T.find(t=>t.k===cur);if(c&&$('#tb'))draw(c);else if(cur==='reports')reportsTab();else if(cur==='search'&&$('#q')&&$('#q').oninput)$('#q').oninput()}
 
 const T=[
 {k:'treasury',t:'الخزينة',order:'d',f:[['d','التاريخ','date'],['descr','البيان','text'],['project','المشروع','projects'],['item','البند','items'],['party','الجهة (مقاول/مورد)','parties'],['inflow','وارد','num'],['outflow','منصرف','num']],
@@ -84,6 +114,7 @@ const T=[
 const TABS=[...T.map(c=>[c.k,c.t]),['search','البحث'],['reports','التقارير'],['lists','القوائم']];
 let cur='treasury',ed=null;
 
+
 function nav(){$('#nav').innerHTML=TABS.map(([k,t])=>`<button class="${k===cur?'on':''}" data-k="${k}">${t}</button>`).join('')}
 $('#nav').onclick=e=>{const k=e.target.dataset.k;if(k)show(k)};
 function head(){$('#co').textContent=S.company;document.title=S.company+' - برنامج الحسابات'}
@@ -93,27 +124,27 @@ function reset(c){c.f.forEach(([k,,t])=>{const i=$('#f_'+k);i.value=t==='date'?t
 function dataTab(c){
  const inp=c.f.map(([k,l,t])=>`<label>${l}<input id="f_${k}" ${t==='date'||t==='month'?`type="${t}"`:t==='num'?'inputmode="decimal"':S.lists[t]?`list="dl_${t}"`:''}></label>`).join('');
  const dls=Object.keys(S.lists).map(n=>`<datalist id="dl_${n}">${S.lists[n].map(x=>`<option value="${esc(x)}">`).join('')}</datalist>`).join('');
- $('#main').innerHTML=`<div class="form">${inp}<label><span><button id="ok">إضافة</button> <button class="l" id="cx" hidden>إلغاء</button>${c.k==='treasury'?' <button class="l" id="ii">استيراد مصروفات من صورة</button><input type="file" id="if" accept="image/*" multiple hidden>':''}</span></label></div>${dls}<div id="imp"></div><div id="tb"></div>`;
- if(c.k==='treasury'){$('#ii').onclick=()=>$('#if').click();$('#if').onchange=e=>{if(e.target.files.length)importImg(e.target.files);e.target.value=''}}
+ $('#main').innerHTML=`<div class="form">${inp}<label><span><button id="ok">إضافة</button> <button class="l" id="cx" hidden>إلغاء</button></span></label></div>${dls}<div id="tb"></div>`;
  reset(c);
- $('#ok').onclick=()=>{
+ const clr=()=>{ed=null;$('#ok').textContent='إضافة';$('#cx').hidden=true;c.f.forEach(([k,,t])=>{if(t==='num'||t==='text')$('#f_'+k).value=''})};
+ $('#ok').onclick=async()=>{
   const o={};
   for(const [k,,t] of c.f){let v=$('#f_'+k).value.trim();if(t==='num')v=N(v);o[k]=v}
   if(!o.d&&c.f[0][0]==='d')return alert('اختر التاريخ');
   const e=c.chk&&c.chk(o);if(e)return alert(e);
-  if(ed)Object.assign(D(c.k).find(r=>r.id===ed),o);else{o.id=S.seq++;D(c.k).push(o)}
-  ed=null;save();$('#ok').textContent='إضافة';$('#cx').hidden=true;
-  c.f.forEach(([k,,t])=>{if(t==='num'||t==='text')$('#f_'+k).value=''});draw(c)};
- $('#cx').onclick=()=>{ed=null;$('#ok').textContent='إضافة';$('#cx').hidden=true;c.f.forEach(([k,,t])=>{if(t==='num'||t==='text')$('#f_'+k).value=''})};
+  $('#ok').disabled=true;
+  try{if(ed)await dbUpd(ed,o);else await dbIns(c.k,o)}catch(x){$('#ok').disabled=false;return fail(x)}
+  $('#ok').disabled=false;clr();draw(c)};
+ $('#cx').onclick=clr;
  $('#tb').onclick=e=>{
-  const eid=+e.target.dataset.e,did=+e.target.dataset.d;
-  if(eid){const r=D(c.k).find(x=>x.id===eid);c.f.forEach(([k,,t])=>$('#f_'+k).value=t==='num'&&!r[k]?'':r[k]);ed=eid;$('#ok').textContent='حفظ التعديل';$('#cx').hidden=false;scrollTo(0,0)}
-  if(did&&confirm('حذف السطر نهائيًا؟')){S.data[c.k]=D(c.k).filter(x=>x.id!==did);save();draw(c)}};
- $('#tb').onchange=e=>{const o=e.target.dataset.o;if(o){S.opts=S.opts||{};S.opts[o]=e.target.checked;save();draw(c)}};
+  const eid=e.target.dataset.e,did=e.target.dataset.d;
+  if(eid){const r=D(c.k).find(x=>x.id===eid);if(!r)return;c.f.forEach(([k,,t])=>$('#f_'+k).value=t==='num'&&!r[k]?'':r[k]);ed=eid;$('#ok').textContent='حفظ التعديل';$('#cx').hidden=false;scrollTo(0,0)}
+  if(did&&confirm('حذف السطر نهائيًا؟ سيختفي عند كل المستخدمين.'))dbDel(did).then(()=>draw(c)).catch(fail)};
+ $('#tb').onchange=e=>{const o=e.target.dataset.o;if(o){S.opts=S.opts||{};S.opts[o]=e.target.checked;setS('opts',S.opts);draw(c)}};
  draw(c)}
 
 function draw(c){
- const rows=[...D(c.k)].sort((a,b)=>String(a[c.order]).localeCompare(String(b[c.order]))||a.id-b.id);
+ const rows=[...D(c.k)].sort((a,b)=>String(a[c.order]).localeCompare(String(b[c.order]))||a._t-b._t);
  c.calc&&c.calc(rows);
  const cols=[...c.f.map(([k,l,t])=>[k,l,t==='num']),...(c.x||[])];
  $('#tb').innerHTML=(c.k==='cheques'?bankBox():'')+`<table><tr>${cols.map(x=>`<th>${x[1]}</th>`).join('')}<th class="act"></th></tr>${rows.map(r=>`<tr>${cols.map(([k,,n])=>`<td>${n?fmt(r[k]):esc(r[k])}</td>`).join('')}<td class="act"><button class="l" data-e="${r.id}">تعديل</button> <button class="l" data-d="${r.id}">حذف</button></td></tr>`).join('')}</table>`+(c.tot||[]).map(([k,l])=>`<div class="tot">${l}: ${fmt(sum(rows,r=>r[k]))}</div>`).join('')+(c.k==='cheques'?bankStmt():'')}
@@ -134,38 +165,6 @@ function bankBox(){
 function bankStmt(){
  let b=0;const rows=bankMoves().map(x=>{b+=x[2]-x[3];return {v:[x[0],x[1],x[2]||'',x[3]||'',b]}});
  return `<h3>كشف حساب البنك التراكمي</h3>`+tbl(['التاريخ','البيان','إيداع / شيك (+)','مصروف (−)','الرصيد المتبقي'],rows)}
-const IMPERR={not_granted:'لم تسمح للصفحة باستخدام Claude، فلا يمكن قراءة الصورة.',rate_limited:'محاولات كثيرة، انتظر قليلًا ثم أعد المحاولة.',image_rejected:'الصورة غير مدعومة أو كبيرة جدًا. استخدم صورة JPG أو PNG أقل من 20 ميجا.',refused:'تعذر قراءة هذه الصورة.',invalid_json:'لم أستطع ترتيب النتيجة، أعد المحاولة بصورة أوضح.'};
-async function importImg(files){
- let sm=null;try{sm=window.claude?await claude.use('sample'):null}catch(e){}
- if(!sm)return alert('قراءة الصور تعمل فقط من النسخة المنشورة على Claude بعد تسجيل الدخول. افتح الرابط من claude.ai.');
- const lim=await sm.limits().catch(()=>null);
- if(!lim||!lim.images)return alert('قراءة الصور غير متاحة في هذا العرض.');
- const fl=[...files].slice(0,lim.images.maxCount||3);
- $('#imp').innerHTML='<div class="card"><b>جاري قراءة الصورة...</b> قد يستغرق حتى دقيقة، ويطلب منك الإذن أول مرة.</div>';
- const prompt=`الصور المرفقة قائمة مصروفات مكتوبة بخط اليد (بالعربية غالبًا). اقرأها بدقة وأعد فقط JSON: مصفوفة، عنصر لكل بند مصروف، بهذا الشكل:
-[{"d":"YYYY-MM-DD أو فارغ إذا لم يُكتب تاريخ","descr":"البيان كما هو مكتوب","party":"اسم الجهة أو الشخص المدفوع له أو فارغ","project":"فقط من هذه القائمة إن كان واضحًا وإلا فارغ: ${S.lists.projects.join('، ')}","item":"فقط من هذه القائمة إن كان واضحًا وإلا فارغ: ${S.lists.items.join('، ')}","outflow":123.5,"uncertain":false}]
-قواعد: اكتب الأرقام بالأرقام الإنجليزية، والمبلغ رقم فقط. تجاهل سطور الإجمالي والمجموع. لا تخمّن ولا تخترع: ضع uncertain:true لأي بند أو رقم أو كلمة غير واضحة. إذا كان التاريخ مكتوبًا بدون سنة فاستخدم سنة ${today().slice(0,4)}.`;
- try{
-  const out=await sm.json(prompt,{images:fl,cache:false});
-  const rows=(Array.isArray(out)?out:[]).map(r=>({d:/^\d{4}-\d{2}-\d{2}$/.test(r.d)?r.d:'',descr:r.descr||'',party:r.party||'',project:r.project||'',item:r.item||'',outflow:N(r.outflow),u:!!r.uncertain}));
-  if(!rows.length){$('#imp').innerHTML='';return alert('لم أجد مصروفات في الصورة. جرّب صورة أوضح.')}
-  impReview(rows)
- }catch(e){$('#imp').innerHTML='';alert(IMPERR[e.code]||'تعذر قراءة الصورة، حاول مرة أخرى.')}}
-function impReview(rows){
- const inp=(c,v,w)=>`<input class="${c}" value="${esc(v)}" style="min-width:${w||90}px;width:100%">`;
- $('#imp').innerHTML=`<div class="card" style="margin-bottom:12px"><h3 style="margin-top:0">راجع المصروفات قبل التسجيل</h3>
- <div class="note">الصفوف الصفراء = غير واضحة في الصورة، راجعها. عدّل أي خانة، وأزل العلامة من أي سطر لا تريده. التاريخ أو المشروع الفارغ يأخذ القيمة الافتراضية.</div>
- <div class="form"><label>تاريخ افتراضي<input type="date" id="i_d" value="${today()}"></label><label>مشروع افتراضي<input id="i_p" list="dl_projects"></label></div>
- <div style="overflow-x:auto"><table><tr><th></th><th>التاريخ</th><th>البيان</th><th>المشروع</th><th>البند</th><th>الجهة</th><th>المبلغ</th></tr>${rows.map((r,i)=>`<tr data-i="${i}" style="${r.u?'background:#fff3b0':''}"><td><input type="checkbox" class="on" checked style="min-width:0"></td><td><input type="date" class="d" value="${r.d}"></td><td>${inp('ds',r.descr,180)}</td><td>${inp('pj',r.project)}</td><td>${inp('it',r.item)}</td><td>${inp('pt',r.party)}</td><td>${inp('am',r.outflow||'',80)}</td></tr>`).join('')}</table></div>
- <button id="i_ok">تسجيل المحدد في الخزينة</button> <button class="l" id="i_no">إلغاء</button></div>`;
- $('#i_no').onclick=()=>$('#imp').innerHTML='';
- $('#i_ok').onclick=()=>{
-  const dd=$('#i_d').value||today(),dp=$('#i_p').value.trim();let n=0;
-  document.querySelectorAll('#imp tr[data-i]').forEach(tr=>{const g=c=>tr.querySelector('.'+c),am=N(g('am').value);
-   if(!g('on').checked||!am)return;
-   D('treasury').push({id:S.seq++,d:g('d').value||dd,descr:g('ds').value.trim(),project:g('pj').value.trim()||dp,item:g('it').value.trim(),party:g('pt').value.trim(),inflow:0,outflow:am});n++});
-  if(!n)return alert('لا توجد مصروفات محددة بمبلغ صحيح');
-  save();alert('تم تسجيل '+n+' مصروف في الخزينة');show('treasury')}}
 function tbl(h,rows){return `<table><tr>${h.map(x=>`<th>${x}</th>`).join('')}</tr>${rows.map(r=>`<tr class="${r.s?'s':''}">${r.v.map(x=>`<td>${typeof x==='number'?fmt(x):esc(x)}</td>`).join('')}</tr>`).join('')}</table>`}
 
 function searchTab(){
@@ -194,19 +193,47 @@ function reportsTab(){
  const bk=[...new Set(D('cheques').map(r=>r.bank))].sort().map(b=>({v:[b||'-',sum(D('cheques').filter(r=>r.bank===b),r=>r.amount)]}));
  $('#main').innerHTML=`<h3>كشف المقاولين والموردين</h3>${tbl(['المقاول / المورد','إجمالي المستخلصات','المدفوع','المتبقي'],con)}<h3>مصروفات المشاريع حسب البند</h3>${tbl(['البند',...pj,'الإجمالي'],piv)}<h3>المشاريع وجهات الإسناد</h3>${tbl(['المشروع','جهة الإسناد','قيمة المشروع','المصروفات','المتبقي من قيمة المشروع'],asg)}<h3>أرصدة العهد</h3>${tbl(['الموظف','عهدة مستلمة','مصروفات مُسوّاة','المتبقي في العهدة'],cu)}<h3>الشيكات حسب البنك</h3>${tbl(['البنك','إجمالي الشيكات'],bk)}<h3>رصيد البنك</h3>${bankBox().replace(/<div class="note act">[\s\S]*$/,'')}`}
 
+
 function listsTab(){
  const nm={projects:'المشاريع',items:'بنود المصروفات',parties:'المقاولون / الموردون',employees:'الموظفون'};
- $('#main').innerHTML=`<p>أسماء هذه القوائم تظهر كاقتراحات أثناء الكتابة في باقي الشاشات. حذف اسم من القائمة لا يمسح الحركات القديمة.</p><div class="grid">${Object.keys(nm).map(k=>`<div class="card"><b>${nm[k]}</b><ul>${S.lists[k].map((x,i)=>`<li>${esc(x)}<button class="l" data-k="${k}" data-i="${i}">حذف</button></li>`).join('')}</ul><label><input id="n_${k}" placeholder="اسم جديد"></label><br><button data-add="${k}">إضافة</button></div>`).join('')}</div>`;
+ $('#main').innerHTML=`<p>أسماء هذه القوائم تظهر كاقتراحات أثناء الكتابة عند كل المستخدمين. حذف اسم من القائمة لا يمسح الحركات القديمة.</p><div class="grid">${Object.keys(nm).map(k=>`<div class="card"><b>${nm[k]}</b><ul>${S.lists[k].map((x,i)=>`<li>${esc(x)}<button class="l" data-k="${k}" data-i="${i}">حذف</button></li>`).join('')}</ul><label><input id="n_${k}" placeholder="اسم جديد"></label><br><button data-add="${k}">إضافة</button></div>`).join('')}</div>`;
  $('#main').onclick=e=>{const d=e.target.dataset;
-  if(d.add){const v=$('#n_'+d.add).value.trim();if(v&&!S.lists[d.add].includes(v)){S.lists[d.add].push(v);save();listsTab()}}
-  else if(d.i!==undefined){S.lists[d.k].splice(+d.i,1);save();listsTab()}}}
+  if(d.add){const v=$('#n_'+d.add).value.trim();if(v&&!S.lists[d.add].includes(v)){S.lists[d.add].push(v);setS('lists',S.lists);listsTab()}}
+  else if(d.i!==undefined&&d.k){S.lists[d.k].splice(+d.i,1);setS('lists',S.lists);listsTab()}}}
 
-$('#ren').onclick=()=>{const v=prompt('اسم الشركة:',S.company);if(v&&v.trim()){S.company=v.trim();save();head()}};
-$('#exp').onclick=async()=>{const name='accounts-backup-'+today()+'.json',data=JSON.stringify(S);let dl=null;try{dl=window.claude&&await claude.use('downloads')}catch(e){}
- if(dl){try{await dl.save({filename:name,data})}catch(e){}return}
- const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));a.download=name;a.click()};
-$('#imp').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const o=JSON.parse(r.result);if(!o.lists||!o.data)throw 0;if(confirm('سيتم استبدال كل البيانات الحالية بالنسخة المختارة. متأكد؟')){S=o;save();head();show('treasury')}}catch(x){alert('الملف غير صالح')}};r.readAsText(f)};
-head();show('treasury');
+// ---------- الدخول والتشغيل ----------
+function loginUI(){
+ $('#nav').innerHTML='';$('#who').textContent='';$('#out').hidden=true;$('#ren').hidden=true;$('#exp').hidden=true;$('#impl').hidden=true;$('#st').textContent='';
+ $('#main').innerHTML=`<div class="card" style="max-width:380px;margin:30px auto"><h3 style="margin-top:0">تسجيل الدخول</h3><label>البريد الإلكتروني<input id="em" type="email" dir="ltr" autocomplete="username"></label><br><label>كلمة السر<input id="pw" type="password" dir="ltr" autocomplete="current-password"></label><br><button id="lg">دخول</button></div>`;
+ const go=async()=>{const r=await sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value});if(r.error)return alert('البريد أو كلمة السر غير صحيحة');start(r.data.session.user)};
+ $('#lg').onclick=go;$('#pw').onkeydown=e=>{if(e.key==='Enter')go()}}
+async function start(user){
+ $('#who').textContent=user.email;['out','ren','exp','impl'].forEach(i=>$('#'+i).hidden=false);
+ $('#main').innerHTML='<p>جاري تحميل البيانات...</p>';
+ try{await loadAll()}catch(e){$('#main').innerHTML='<div class="card">تعذر تحميل البيانات: '+esc(e.message||e)+'<br>تأكد من تشغيل ملف setup.sql في Supabase.</div>';return}
+ head();show('treasury');live()}
+async function boot(){
+ head();
+ if(!sb){$('#main').innerHTML='<div class="card"><b>لم يتم ضبط Supabase بعد.</b><br>افتح ملف index.html وضع الرابط (SUPABASE_URL) والمفتاح (SUPABASE_KEY) في أول السكربت.</div>';return}
+ const {data}=await sb.auth.getSession();
+ data.session?start(data.session.user):loginUI();
+ sb.auth.onAuthStateChange(ev=>{if(ev==='SIGNED_OUT'){if(chan){sb.removeChannel(chan);chan=null}loginUI()}})}
+
+$('#out').onclick=()=>sb&&sb.auth.signOut();
+$('#ren').onclick=()=>{const v=prompt('اسم الشركة:',S.company);if(v&&v.trim()){S.company=v.trim();setS('company',{v:S.company});head()}};
+$('#exp').onclick=()=>{
+ const clean={company:S.company,lists:S.lists,opts:S.opts,data:{}};
+ KINDS.forEach(k=>clean.data[k]=D(k).map(({id,_t,_bal,_cum,_net,...d})=>d));
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(clean)],{type:'application/json'}));a.download='accounts-backup-'+today()+'.json';a.click()};
+$('#imp').onchange=e=>{const f=e.target.files[0];e.target.value='';if(!f)return;const r=new FileReader();
+ r.onload=async()=>{try{
+  const o=JSON.parse(r.result);if(!o.data)throw 0;
+  const rows=[];KINDS.forEach(k=>(o.data[k]||[]).forEach(x=>{const d={};for(const p in x)if(p!=='id'&&p[0]!=='_')d[p]=x[p];rows.push({kind:k,data:d})}));
+  if(!confirm('سيتم إضافة '+rows.length+' سجل من النسخة إلى البيانات المشتركة (لن يُحذف شيء). متأكد؟'))return;
+  for(let i=0;i<rows.length;i+=500){const x=await sb.from('records').insert(rows.slice(i,i+500));if(x.error)throw x.error}
+  if(o.lists){for(const k in o.lists)S.lists[k]=[...new Set([...(S.lists[k]||[]),...o.lists[k]])];await setS('lists',S.lists)}
+  await loadAll();show('treasury');alert('تم استيراد '+rows.length+' سجل')}catch(x){alert('تعذر الاستيراد: '+((x&&x.message)||'الملف غير صالح'))}};r.readAsText(f)};
+boot();
 </script>
 </body>
 </html>
