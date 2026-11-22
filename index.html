@@ -239,6 +239,7 @@ function loginUI(){
 async function start(user){
  ME=user.id;
  const pr=await sb.from('profiles').select('role').eq('id',user.id).maybeSingle();
+ if(pr.error){$('#main').innerHTML='<div class="card">تعذر قراءة الصلاحية: '+esc(pr.error.message)+'<br>شغّل ملف security-update.sql كاملًا في Supabase.</div>';return}
  ROLE=(pr.data&&pr.data.role)||'pending';
  $('#who').textContent=user.email+' ('+(RN[ROLE]||ROLE)+')';['out','exp'].forEach(i=>$('#'+i).hidden=false);$('#ren').hidden=$('#impl').hidden=!ADMIN();
  if(!['admin','accountant','viewer'].includes(ROLE)){$('#main').innerHTML='<div class="card">حسابك لم يُفعَّل بعد. اطلب من المدير تحديد صلاحيتك، ثم سجّل الدخول من جديد.</div>';return}
