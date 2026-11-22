@@ -7,6 +7,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <style>
 *{box-sizing:border-box}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#b8c0cc;margin-inline-end:6px}.dot.on{background:#1aa260}
 [hidden]{display:none!important}
 :root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 body{margin:0;font-family:Tahoma,Cairo,Arial,sans-serif;background:#f5f7fa;color:#14283c}
@@ -75,7 +76,7 @@ const norm=t=>String(t||'').toLowerCase().replace(/[أإآ]/g,'ا').replace(/ة/
 const sum=(a,f)=>a.reduce((s,x)=>s+(+f(x)||0),0);
 const D=k=>S.data[k]||(S.data[k]=[]);
 const fail=e=>alert('تعذر الحفظ: '+((e&&e.message)||e));
-let ROLE=null,ME=null;const ADMIN=()=>ROLE==='admin',CANW=()=>ROLE==='admin'||ROLE==='accountant';
+let ROLE=null,ME=null,EMAIL='',seenKick=null,pch=null,onl={};const ADMIN=()=>ROLE==='admin',CANW=()=>ROLE==='admin'||ROLE==='accountant';
 const RN={admin:'مدير',accountant:'محاسب',viewer:'مشاهدة فقط',pending:'بانتظار التفعيل'};
 
 // ---------- قاعدة البيانات المشتركة ----------
@@ -225,10 +226,14 @@ async function auditTab(){
 async function usersTab(){
  const r=await sb.from('profiles').select('id,email,role').order('email');
  if(r.error){$('#main').innerHTML='<div class="card">تعذر تحميل المستخدمين: '+esc(r.error.message)+'</div>';return}
- $('#main').innerHTML=`<p class="note">المستخدم الجديد يبدأ «بانتظار التفعيل» ولا يرى أي بيانات حتى تحدد صلاحيته. المدير: كل شيء. المحاسب: إضافة وتعديل بدون حذف. مشاهدة فقط: عرض.</p><table><tr><th>الإيميل</th><th>الصلاحية</th></tr>${r.data.map(u=>`<tr><td>${esc(u.email)}</td><td><select data-u="${u.id}">${Object.keys(RN).map(k=>`<option value="${k}" ${k===u.role?'selected':''}>${RN[k]}</option>`).join('')}</select></td></tr>`).join('')}</table>`;
+ $('#main').innerHTML=`<p class="note">المتصلون الآن: <b id="onc">0</b>. المستخدم الجديد يبدأ «بانتظار التفعيل» ولا يرى أي بيانات حتى تحدد صلاحيته. «إخراج» بينهي جلسته فورًا، وبعده يقدر يدخل تاني. لمنعه من الدخول غيّر صلاحيته إلى «بانتظار التفعيل».</p><table><tr><th>الإيميل</th><th>الصلاحية</th><th>الحالة</th><th>إجراء</th></tr>${r.data.map(u=>`<tr><td>${esc(u.email)}</td><td><select data-u="${u.id}">${Object.keys(RN).map(k=>`<option value="${k}" ${k===u.role?'selected':''}>${RN[k]}</option>`).join('')}</select></td><td data-on="${u.id}"></td><td>${u.id===ME?'':`<button class="l" data-kick="${u.id}">إخراج</button>`}</td></tr>`).join('')}</table>`;
+ paintOn();
  $('#main').onchange=async e=>{const id=e.target.dataset.u;if(!id)return;
   if(id===ME&&e.target.value!=='admin'&&!confirm('ستفقد صلاحية المدير على حسابك. متأكد؟')){usersTab();return}
-  const x=await sb.from('profiles').update({role:e.target.value}).eq('id',id);if(x.error){fail(x.error);usersTab()}}}
+  const x=await sb.from('profiles').update({role:e.target.value}).eq('id',id);if(x.error){fail(x.error);usersTab()}};
+ $('#main').onclick=async e=>{const id=e.target.dataset&&e.target.dataset.kick;if(!id)return;
+  if(!confirm('إخراج هذا المستخدم من البرنامج الآن؟'))return;
+  const x=await sb.rpc('kick_user',{uid:id});if(x.error)fail(x.error);else alert('تم إخراج المستخدم.')}}
 
 // ---------- الدخول والتشغيل ----------
 function loginUI(){
@@ -238,14 +243,15 @@ function loginUI(){
  $('#lg').onclick=go;$('#pw').onkeydown=e=>{if(e.key==='Enter')go()}}
 async function start(user){
  ME=user.id;
- const pr=await sb.from('profiles').select('role').eq('id',user.id).maybeSingle();
+ let pr=await sb.from('profiles').select('role,kicked_at').eq('id',user.id).maybeSingle();
+ if(pr.error)pr=await sb.from('profiles').select('role').eq('id',user.id).maybeSingle();
  if(pr.error){$('#main').innerHTML='<div class="card">تعذر قراءة الصلاحية: '+esc(pr.error.message)+'<br>شغّل ملف security-update.sql كاملًا في Supabase.</div>';return}
  ROLE=(pr.data&&pr.data.role)||'pending';
  $('#who').textContent=user.email+' ('+(RN[ROLE]||ROLE)+')';['out','exp'].forEach(i=>$('#'+i).hidden=false);$('#ren').hidden=$('#impl').hidden=!ADMIN();
  if(!['admin','accountant','viewer'].includes(ROLE)){$('#main').innerHTML='<div class="card">حسابك لم يُفعَّل بعد. اطلب من المدير تحديد صلاحيتك، ثم سجّل الدخول من جديد.</div>';return}
  $('#main').innerHTML='<p>جاري تحميل البيانات...</p>';
  try{await loadAll()}catch(e){$('#main').innerHTML='<div class="card">تعذر تحميل البيانات: '+esc(e.message||e)+'<br>تأكد من تشغيل ملف setup.sql في Supabase.</div>';return}
- head();show('treasury');live()}
+ seenKick=pr.data.kicked_at||null;EMAIL=user.email;head();show('treasury');live();watch()}
 async function boot(){
  head();
  if(!sb){$('#main').innerHTML='<div class="card"><b>لم يتم ضبط Supabase بعد.</b><br>افتح ملف index.html وضع الرابط (SUPABASE_URL) والمفتاح (SUPABASE_KEY) في أول السكربت.</div>';return}
@@ -253,7 +259,19 @@ async function boot(){
  data.session?start(data.session.user):loginUI();
  sb.auth.onAuthStateChange(ev=>{if(ev==='SIGNED_OUT'){if(chan){sb.removeChannel(chan);chan=null}loginUI()}})}
 
-$('#out').onclick=async()=>{try{if(sb)await sb.auth.signOut({scope:'local'})}catch(e){}if(chan&&sb){try{sb.removeChannel(chan)}catch(e){}chan=null}ROLE=null;ME=null;loginUI()};
+async function signOutNow(m){try{if(sb)await sb.auth.signOut({scope:'local'})}catch(e){}
+ for(const c of [chan,pch])if(c&&sb){try{sb.removeChannel(c)}catch(e){}}
+ chan=null;pch=null;onl={};ROLE=null;ME=null;loginUI();if(m)alert(m)}
+$('#out').onclick=()=>signOutNow();
+function paintOn(){const n=Object.keys(onl).length;if($('#onc'))$('#onc').textContent=n;document.querySelectorAll('[data-on]').forEach(td=>{td.innerHTML=onl[td.dataset.on]?'<span class="dot on"></span>متصل':'<span class="dot"></span>غير متصل'})}
+function watch(){
+ if(pch){try{sb.removeChannel(pch)}catch(e){}}
+ pch=sb.channel('online',{config:{presence:{key:ME}}});
+ pch.on('presence',{event:'sync'},()=>{onl=pch.presenceState();paintOn()})
+  .on('postgres_changes',{event:'UPDATE',schema:'public',table:'profiles',filter:'id=eq.'+ME},p=>{const k=p.new.kicked_at;
+    if(k&&k!==seenKick)signOutNow('تم إخراجك من البرنامج بواسطة المدير.');
+    else if(p.new.role!==ROLE)signOutNow('تم تغيير صلاحيتك. سجّل الدخول من جديد.')})
+  .subscribe(st=>{if(st==='SUBSCRIBED')pch.track({email:EMAIL,at:new Date().toISOString()})})}
 $('#ren').onclick=()=>{const v=prompt('اسم الشركة:',S.company);if(v&&v.trim()){S.company=v.trim();setS('company',{v:S.company});head()}};
 $('#exp').onclick=()=>{
  const clean={company:S.company,lists:S.lists,opts:S.opts,data:{}};
