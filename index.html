@@ -253,7 +253,7 @@ async function boot(){
  data.session?start(data.session.user):loginUI();
  sb.auth.onAuthStateChange(ev=>{if(ev==='SIGNED_OUT'){if(chan){sb.removeChannel(chan);chan=null}loginUI()}})}
 
-$('#out').onclick=()=>sb&&sb.auth.signOut();
+$('#out').onclick=async()=>{try{if(sb)await sb.auth.signOut({scope:'local'})}catch(e){}if(chan&&sb){try{sb.removeChannel(chan)}catch(e){}chan=null}ROLE=null;ME=null;loginUI()};
 $('#ren').onclick=()=>{const v=prompt('اسم الشركة:',S.company);if(v&&v.trim()){S.company=v.trim();setS('company',{v:S.company});head()}};
 $('#exp').onclick=()=>{
  const clean={company:S.company,lists:S.lists,opts:S.opts,data:{}};
