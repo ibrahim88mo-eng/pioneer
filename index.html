@@ -234,7 +234,7 @@ async function usersTab(){
 function loginUI(){
  $('#nav').innerHTML='';$('#who').textContent='';$('#out').hidden=true;$('#ren').hidden=true;$('#exp').hidden=true;$('#impl').hidden=true;$('#st').textContent='';
  $('#main').innerHTML=`<div class="card" style="max-width:380px;margin:30px auto"><h3 style="margin-top:0">تسجيل الدخول</h3><label>البريد الإلكتروني<input id="em" type="email" dir="ltr" autocomplete="username"></label><br><label>كلمة السر<input id="pw" type="password" dir="ltr" autocomplete="current-password"></label><br><button id="lg">دخول</button></div>`;
- const go=async()=>{const r=await sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value});if(r.error)return alert('البريد أو كلمة السر غير صحيحة');start(r.data.session.user)};
+ const go=async()=>{const r=await sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value});if(r.error)return alert((r.error.status===400?'البريد أو كلمة السر غير صحيحة':'تعذر الدخول')+'\n\n('+r.error.message+')');start(r.data.session.user)};
  $('#lg').onclick=go;$('#pw').onkeydown=e=>{if(e.key==='Enter')go()}}
 async function start(user){
  ME=user.id;
