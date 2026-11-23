@@ -2,6 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
+<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#1F3864"><link rel="apple-touch-icon" href="icon-192.png">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>برنامج الحسابات</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -286,6 +287,8 @@ $('#imp').onchange=e=>{const f=e.target.files[0];e.target.value='';if(!f)return;
   if(o.lists){for(const k in o.lists)S.lists[k]=[...new Set([...(S.lists[k]||[]),...o.lists[k]])];await setS('lists',S.lists)}
   await loadAll();show('treasury');alert('تم استيراد '+rows.length+' سجل')}catch(x){alert('تعذر الاستيراد: '+((x&&x.message)||'الملف غير صالح'))}};r.readAsText(f)};
 boot();
+
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
 </body>
 </html>
