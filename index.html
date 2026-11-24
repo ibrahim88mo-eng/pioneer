@@ -72,6 +72,8 @@ tr.s{background:#d6e4f0}tr.s td{background:none}
 }
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:12px}.modal>div{background:#fff;border-radius:10px;padding:16px;max-width:560px;width:100%;max-height:90vh;overflow:auto}
 @media print{.modal{display:none}}
+#bk{margin:10px 16px 0;padding:10px 12px;border-radius:8px;background:#fff4d6;border:1px solid #e6c36a;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px}
+@media print{#bk{display:none}}
 </style>
 </head>
 <body>
@@ -83,6 +85,7 @@ tr.s{background:#d6e4f0}tr.s td{background:none}
 <span id="st" style="font-size:13px"></span><span id="who" style="font-size:13px;color:#4f5b69"></span><button class="l" id="out" hidden>خروج</button><button class="l" id="mbtn" aria-label="المزيد">⋯</button>
 </header>
 <nav id="nav"></nav>
+<div id="bk" hidden></div>
 <main id="main"></main>
 <script>
 // ====== إعدادات Supabase: ضع القيمتين هنا ======
@@ -109,7 +112,7 @@ const RN={admin:'مدير',accountant:'محاسب',viewer:'مشاهدة فقط',
 const toRow=r=>({...r.data,id:r.id,_t:Date.parse(r.created_at)});
 function upsertLocal(r){if(r.data&&r.data.moved){removeLocal(r.id);return}const a=D(r.kind),x=toRow(r),i=a.findIndex(y=>y.id===x.id);i<0?a.push(x):a[i]=x}
 function removeLocal(id){for(const k in S.data)S.data[k]=S.data[k].filter(y=>y.id!==id)}
-function applySetting(r){if(r.key==='company')S.company=r.value.v;else if(r.key==='lists')S.lists={...S.lists,...r.value};else if(r.key==='opts')S.opts=r.value||{}}
+function applySetting(r){if(r.key==='company')S.company=r.value.v;else if(r.key==='lists')S.lists={...S.lists,...r.value};else if(r.key==='opts')S.opts=r.value||{};else if(r.key==='backup')S.backup=r.value&&r.value.v}
 const setS=(key,value)=>sb.from('settings').upsert({key,value}).then(r=>{if(r.error)fail(r.error)});
 async function dbIns(kind,o){const r=await sb.from('records').insert({kind,data:o}).select().single();if(r.error)throw r.error;upsertLocal(r.data)}
 async function dbUpd(id,o){const r=await sb.from('records').update({data:o,updated_at:new Date().toISOString()}).eq('id',id).select().single();if(r.error)throw r.error;upsertLocal(r.data)}
@@ -147,7 +150,13 @@ const TABS=[...T.map(c=>[c.k,c.t]),['search','البحث'],['reports','التق�
 let cur='treasury',ed=null;
 
 
-function nav(){$('#nav').innerHTML=TABS.filter(([k])=>!['users','audit'].includes(k)||ADMIN()).map(([k,t])=>`<button class="${k===cur?'on':''}" data-k="${k}">${t}</button>`).join('')}
+function nav(){$('#nav').innerHTML=TABS.filter(([k])=>!['users','audit'].includes(k)||ADMIN()).map(([k,t])=>`<button class="${k===cur?'on':''}" data-k="${k}">${t}</button>`).join('');bkBanner()}
+function bkBanner(){const b=$('#bk');if(!b)return;
+ const last=S.backup,days=last?Math.floor((Date.now()-Date.parse(last))/864e5):null;
+ if(!ADMIN()||(last&&days<7)){b.hidden=true;return}
+ b.hidden=false;
+ b.innerHTML=(last?'آخر نسخة احتياطية كانت من '+days+' يوم':'لم تُعمل أي نسخة احتياطية لحد دلوقتي')+'. الأفضل نسخة كل أسبوع وتحفظها خارج الإنترنت. <button id="bkgo">عمل نسخة الآن</button>';
+ $('#bkgo').onclick=()=>$('#exp').click()}
 $('#nav').onclick=e=>{const k=e.target.dataset.k;if(k)show(k)};
 function head(){$('#co').textContent=S.company;document.title=S.company+' - برنامج الحسابات'}
 function show(k){cur=k;ed=null;nav();const c=T.find(t=>t.k===k);c?dataTab(c):({search:searchTab,reports:reportsTab,lists:listsTab,users:usersTab,audit:auditTab})[k]()}
@@ -298,7 +307,7 @@ function toExpense(k,x){
  return {d:x.d||(x.month?x.month+'-01':today()),descr:descr||'بدون بيان',project:x.project||'',item:x.item||'',party:x.party||'',amount:amt,note:note}}
 // ---------- الدخول والتشغيل ----------
 function loginUI(){
- $('#nav').innerHTML='';$('#who').textContent='';$('#out').hidden=true;$('#ren').hidden=true;$('#exp').hidden=true;$('#impl').hidden=true;$('#st').textContent='';
+ $('#nav').innerHTML='';$('#bk').hidden=true;$('#who').textContent='';$('#out').hidden=true;$('#ren').hidden=true;$('#exp').hidden=true;$('#impl').hidden=true;$('#st').textContent='';
  $('#main').innerHTML=`<div class="card" style="max-width:380px;margin:30px auto"><h3 style="margin-top:0">تسجيل الدخول</h3><label>البريد الإلكتروني<input id="em" type="email" dir="ltr" autocomplete="username"></label><br><label>كلمة السر<input id="pw" type="password" dir="ltr" autocomplete="current-password"></label><br><button id="lg">دخول</button></div>`;
  const go=async()=>{const r=await sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value});if(r.error)return alert((r.error.status===400?'البريد أو كلمة السر غير صحيحة':'تعذر الدخول')+'\n\n('+r.error.message+')');start(r.data.session.user)};
  $('#lg').onclick=go;$('#pw').onkeydown=e=>{if(e.key==='Enter')go()}}
@@ -338,7 +347,8 @@ $('#ren').onclick=()=>{const v=prompt('اسم الشركة:',S.company);if(v&&v.
 $('#exp').onclick=()=>{
  const clean={company:S.company,lists:S.lists,opts:S.opts,data:{}};
  KINDS.forEach(k=>clean.data[k]=D(k).map(({id,_t,_bal,_cum,_net,...d})=>d));
- const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(clean)],{type:'application/json'}));a.download='accounts-backup-'+today()+'.json';a.click()};
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(clean)],{type:'application/json'}));a.download='accounts-backup-'+today()+'.json';a.click();
+ if(ADMIN()){S.backup=today();setS('backup',{v:S.backup});bkBanner()}};
 $('#imp').onchange=e=>{const f=e.target.files[0];e.target.value='';if(!f)return;const r=new FileReader();
  r.onload=async()=>{try{
   const o=JSON.parse(r.result);if(!o.data)throw 0;
