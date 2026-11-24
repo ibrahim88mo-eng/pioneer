@@ -175,11 +175,11 @@ function dataTab(c){
   if(!o.d&&c.f[0][0]==='d')return alert('اختر التاريخ');
   const e=c.chk&&c.chk(o);if(e)return alert(e);
   $('#ok').disabled=true;
-  let nid=null;try{if(ed){const old=D(c.k).find(x=>x.id===ed);if(old&&old.alloc)o.alloc=old.alloc;await dbUpd(ed,o)}else nid=await dbIns(c.k,o)}catch(x){$('#ok').disabled=false;return fail(x)}
+  let nid=null;try{if(ed){const old=D(c.k).find(x=>x.id===ed);if(old){if(old.alloc)o.alloc=old.alloc;if(old.files)o.files=old.files}await dbUpd(ed,o)}else nid=await dbIns(c.k,o)}catch(x){$('#ok').disabled=false;return fail(x)}
   $('#ok').disabled=false;clr();draw(c);if(nid&&c.k==='cheques'&&norm(o.status)!=='مرتجع')allocUI(nid)};
  $('#cx').onclick=clr;
  $('#tb').onclick=e=>{
-  const eid=e.target.dataset.e,did=e.target.dataset.d,rid=e.target.dataset.r,aid=e.target.dataset.a;if(rid)routeUI(rid);if(aid)allocUI(aid);
+  const eid=e.target.dataset.e,did=e.target.dataset.d,rid=e.target.dataset.r,aid=e.target.dataset.a,fid=e.target.dataset.f;if(rid)routeUI(rid);if(aid)allocUI(aid);if(fid)attachUI(c.k,fid);
   if(eid){const r=D(c.k).find(x=>x.id===eid);if(!r)return;c.f.forEach(([k,,t])=>$('#f_'+k).value=t==='num'&&!r[k]?'':(r[k]??''));ed=eid;$('#ok').textContent='حفظ التعديل';$('#cx').hidden=false;scrollTo(0,0)}
   if(did&&confirm('حذف السطر نهائيًا؟ سيختفي عند كل المستخدمين.'))dbDel(did).then(()=>draw(c)).catch(fail)};
  $('#tb').onchange=e=>{const o=e.target.dataset.o;if(o){S.opts=S.opts||{};S.opts[o]=e.target.checked;setS('opts',S.opts);draw(c)}};
@@ -189,7 +189,7 @@ function draw(c){
  const rows=[...D(c.k)].sort((a,b)=>String(a[c.order]).localeCompare(String(b[c.order]))||a._t-b._t);
  c.calc&&c.calc(rows);
  const cols=[...c.f.map(([k,l,t])=>[k,l,t==='num']),...(c.x||[])];
- $('#tb').innerHTML=(c.k==='cheques'?bankBox()+dueBox():'')+`<table><tr>${cols.map(x=>`<th>${x[1]}</th>`).join('')}<th class="act"></th></tr>${rows.map(r=>`<tr>${cols.map(([k,l,n])=>`<td data-label="${esc(l)}">${n?fmt(r[k]):esc(r[k])}</td>`).join('')}<td class="act">${CANW()?`<button class="l" data-e="${r.id}">تعديل</button> `:''}${CANW()&&c.k==='expenses'?`<button data-r="${r.id}">إضافة</button> `:''}${CANW()&&c.k==='cheques'?`<button data-a="${r.id}">توزيع</button> `:''}${ADMIN()?`<button class="l" data-d="${r.id}">حذف</button>`:''}</td></tr>`).join('')}</table>`+(c.tot||[]).map(([k,l])=>`<div class="tot">${l}: ${fmt(sum(rows,r=>r[k]))}</div>`).join('')+(c.k==='cheques'?bankStmt():'')+(c.k==='assign'?assignNote():'')}
+ $('#tb').innerHTML=(c.k==='cheques'?bankBox()+dueBox():'')+`<table><tr>${cols.map(x=>`<th>${x[1]}</th>`).join('')}<th class="act"></th></tr>${rows.map(r=>`<tr>${cols.map(([k,l,n])=>`<td data-label="${esc(l)}">${n?fmt(r[k]):esc(r[k])}</td>`).join('')}<td class="act"><button class="l" data-f="${r.id}">📎${(r.files||[]).length?' '+r.files.length:''}</button> ${CANW()?`<button class="l" data-e="${r.id}">تعديل</button> `:''}${CANW()&&c.k==='expenses'?`<button data-r="${r.id}">إضافة</button> `:''}${CANW()&&c.k==='cheques'?`<button data-a="${r.id}">توزيع</button> `:''}${ADMIN()?`<button class="l" data-d="${r.id}">حذف</button>`:''}</td></tr>`).join('')}</table>`+(c.tot||[]).map(([k,l])=>`<div class="tot">${l}: ${fmt(sum(rows,r=>r[k]))}</div>`).join('')+(c.k==='cheques'?bankStmt():'')+(c.k==='assign'?assignNote():'')}
 
 function bankMoves(){
  const o=S.opts||{},m=[];
@@ -294,6 +294,7 @@ function routeUI(id){
   for(const [k,,t] of c.f){let v=$('#r_'+k).value.trim();if(t==='num')v=N(v);o[k]=v}
   if(!o.d&&c.f[0][0]==='d')return alert('اختر التاريخ');
   const er=c.chk&&c.chk(o);if(er)return alert(er);
+  if(e.files&&e.files.length)o.files=e.files;
   $('#rt_ok').disabled=true;
   try{await dbIns(c.k,o)}catch(x){$('#rt_ok').disabled=false;return fail(x)}
   try{await dbDel(e.id)}catch(x){try{await dbUpd(e.id,{d:e.d,descr:e.descr,amount:e.amount,note:e.note||'',project:e.project||'',item:e.item||'',party:e.party||'',moved:c.k})}catch(y){alert('اتسجل في «'+c.t+'» لكن ما اتشالش من المصروفات: '+((y&&y.message)||y))}}
@@ -332,9 +333,36 @@ function allocUI(id){
    const A=L.map(x=>({project:String(x.project).trim(),amount:N(x.amount)})).filter(x=>x.project||x.amount);
    if(A.some(x=>!x.project||x.amount<=0))return alert('كل جزء لازم له مشروع ومبلغ أكبر من صفر');
    if(A.reduce((a,x)=>a+x.amount,0)>r.amount+0.005)return alert('مجموع الأجزاء أكبر من قيمة الشيك');
-   const c=T.find(x=>x.k==='cheques'),o={};for(const [k] of c.f)o[k]=r[k]??'';o.alloc=A;
+   const c=T.find(x=>x.k==='cheques'),o={};for(const [k] of c.f)o[k]=r[k]??'';o.alloc=A;if(r.files)o.files=r.files;
    t.disabled=true;try{await dbUpd(id,o)}catch(x){t.disabled=false;return fail(x)}
    m.remove();if($('#tb'))draw(c)}}}
+const getR=(kind,id)=>D(kind).find(x=>x.id===id);
+function recData(kind,r){const c=T.find(t=>t.k===kind),o={};for(const [k] of c.f)o[k]=r[k]??'';if(r.alloc)o.alloc=r.alloc;if(r.files)o.files=r.files;return o}
+function shrink(f){if(!f.type.startsWith('image/')||f.size<400000)return Promise.resolve(f);
+ return new Promise(res=>{const im=new Image(),u=URL.createObjectURL(f);
+  im.onload=()=>{const k=Math.min(1,1600/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);c.getContext('2d').drawImage(im,0,0,c.width,c.height);
+   c.toBlob(b=>{URL.revokeObjectURL(u);res(b?new File([b],f.name.replace(/\.\w+$/,'')+'.jpg',{type:'image/jpeg'}):f)},'image/jpeg',0.8)};
+  im.onerror=()=>res(f);im.src=u})}
+function attachUI(kind,id){
+ if(!getR(kind,id))return;
+ const m=document.createElement('div');m.className='modal';document.body.appendChild(m);
+ const B=()=>sb.storage.from('attachments');
+ const paint=msg=>{const r=getR(kind,id),F=r.files||[];
+  m.innerHTML=`<div><h3>المرفقات</h3><p class="note">${esc(r.descr||r.name||r.client||r.emp||'')}</p>${F.length?`<ul>${F.map((f,i)=>`<li>${esc(f.name)} <small>(${Math.max(1,Math.round(f.size/1024))} ك.ب)</small> <button class="l" data-o="${i}">فتح</button>${CANW()?` <button class="l" data-x="${i}">حذف</button>`:''}</li>`).join('')}</ul>`:'<p>مفيش مرفقات لسه.</p>'}${CANW()?'<p><input type="file" id="at_f" accept="image/*,application/pdf" multiple></p><p><button id="at_up">رفع</button></p>':''}<p class="note" id="at_m">${msg||''}</p><p><button class="l" id="at_cx">إغلاق</button></p></div>`};
+ paint();
+ const say=t=>{const n=$('#at_m');if(n)n.textContent=t};
+ m.onclick=async e=>{const t=e.target,d=t.dataset;
+  if(t===m||t.id==='at_cx'){m.remove();if($('#tb'))refreshView();return}
+  const r=getR(kind,id),F=r.files||[];
+  try{
+   if(d.o!==undefined){const w=window.open('','_blank'),x=await B().createSignedUrl(F[+d.o].path,600);if(x.error){if(w)w.close();throw x.error}w.location=x.data.signedUrl}
+   else if(d.x!==undefined){if(!confirm('حذف المرفق نهائيًا؟'))return;const x=await B().remove([F[+d.x].path]);if(x.error)throw x.error;await dbUpd(id,{...recData(kind,r),files:F.filter((_,i)=>i!==+d.x)});paint()}
+   else if(t.id==='at_up'){const fs=[...$('#at_f').files];if(!fs.length)return say('اختر ملف الأول');t.disabled=true;const add=[];
+    for(let i=0;i<fs.length;i++){say('جاري رفع '+(i+1)+' من '+fs.length+'...');const f=await shrink(fs[i]);if(f.size>10485760)throw new Error('الملف '+fs[i].name+' أكبر من 10 ميجا');
+     const ext=((f.name.match(/\.(\w{1,5})$/)||[0,'bin'])[1]).toLowerCase(),path=kind+'/'+id+'/'+Date.now()+'-'+i+'.'+ext;
+     const x=await B().upload(path,f,{contentType:f.type||'application/octet-stream'});if(x.error)throw x.error;add.push({name:fs[i].name,path,size:f.size})}
+    const cur=getR(kind,id);await dbUpd(id,{...recData(kind,cur),files:[...(cur.files||[]),...add]});paint('تم الرفع.')}
+  }catch(x){t.disabled=false;const msg=(x&&x.message)||String(x);say('تعذر: '+msg+(/bucket|not found/i.test(msg)?' - شغّل ملف attachments.sql في Supabase':''))}}}
 // ---------- الدخول والتشغيل ----------
 function loginUI(){
  $('#nav').innerHTML='';$('#bk').hidden=true;$('#who').textContent='';$('#out').hidden=true;$('#ren').hidden=true;$('#exp').hidden=true;$('#impl').hidden=true;$('#st').textContent='';
