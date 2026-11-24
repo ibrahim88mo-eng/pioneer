@@ -114,7 +114,7 @@ function upsertLocal(r){if(r.data&&r.data.moved){removeLocal(r.id);return}const 
 function removeLocal(id){for(const k in S.data)S.data[k]=S.data[k].filter(y=>y.id!==id)}
 function applySetting(r){if(r.key==='company')S.company=r.value.v;else if(r.key==='lists')S.lists={...S.lists,...r.value};else if(r.key==='opts')S.opts=r.value||{};else if(r.key==='backup')S.backup=r.value&&r.value.v}
 const setS=(key,value)=>sb.from('settings').upsert({key,value}).then(r=>{if(r.error)fail(r.error)});
-async function dbIns(kind,o){const r=await sb.from('records').insert({kind,data:o}).select().single();if(r.error)throw r.error;upsertLocal(r.data)}
+async function dbIns(kind,o){const r=await sb.from('records').insert({kind,data:o}).select().single();if(r.error)throw r.error;upsertLocal(r.data);return r.data.id}
 async function dbUpd(id,o){const r=await sb.from('records').update({data:o,updated_at:new Date().toISOString()}).eq('id',id).select().single();if(r.error)throw r.error;upsertLocal(r.data)}
 async function dbDel(id){const r=await sb.from('records').delete().eq('id',id);if(r.error)throw r.error;removeLocal(id)}
 async function loadAll(){
@@ -143,9 +143,10 @@ const T=[
 {k:'payroll',t:'المرتبات',order:'month',f:[['month','الشهر','month'],['name','الاسم','employees'],['job','الوظيفة','text'],['project','المشروع','projects'],['basic','الأساسي','num'],['allow','بدلات','num'],['deduct','خصومات','num'],['advance','سلف','num']],
  x:[['_net','الصافي',1]],calc:r=>r.forEach(x=>x._net=x.basic+x.allow-x.deduct-x.advance),chk:r=>(!r.name||!r.basic)&&'اكتب الاسم والراتب الأساسي',tot:[['_net','إجمالي المرتبات']]},
 {k:'cheques',t:'حساب البنك',order:'d',f:[['d','التاريخ','date'],['name','اسم الشيك / الإيداع','text'],['amount','القيمة','num'],['bank','اسم البنك','text'],['due','تاريخ الاستحقاق','date0'],['status','الحالة','status']],
- x:[['_cum','الإجمالي التراكمي',1]],calc:r=>{let b=0;r.forEach(x=>{b+=norm(x.status)==='مرتجع'?0:x.amount;x._cum=b})},chk:r=>{if(!r.status)r.status='معلّق';return (!r.name||!r.amount)&&'اكتب اسم الشيك وقيمته'},tot:[['amount','إجمالي الشيكات والإيداعات']]},
+ x:[['_cum','الإجمالي التراكمي',1],['_alloc','موزّع على المشاريع',1],['_rest','غير موزّع',1],['_al','توزيع الشيك',0]],calc:r=>{let b=0;r.forEach(x=>{const ok=okChq(x);b+=ok?x.amount:0;x._cum=b;x._alloc=ok?allocSum(x):0;x._rest=ok?x.amount-x._alloc:0;x._al=(x.alloc||[]).map(a=>a.project+': '+fmt(a.amount)).join(' | ')})},chk:r=>{if(!r.status)r.status='معلّق';return (!r.name||!r.amount)&&'اكتب اسم الشيك وقيمته'},tot:[['amount','إجمالي الشيكات والإيداعات'],['_rest','غير موزّع على مشاريع']]},
 {k:'assign',t:'جهة الإسناد',order:'project',f:[['project','المشروع','projects'],['client','جهة الإسناد','text'],['value','قيمة المشروع','num']],
- chk:r=>(!r.project||!r.client)&&'اكتب المشروع وجهة الإسناد',tot:[['value','إجمالي قيم المشاريع']]}];
+ x:[['_rev','الإيراد المحصّل (من حساب البنك)',1],['_left','المتبقي من قيمة المشروع',1]],calc:r=>{const m=revByProject(),seen=new Set();r.forEach(x=>{x._rev=seen.has(x.project)?0:(m[x.project]||0);seen.add(x.project);x._left=x.value-x._rev})},
+ chk:r=>(!r.project||!r.client)&&'اكتب المشروع وجهة الإسناد',tot:[['value','إجمالي قيم المشاريع'],['_rev','إجمالي الإيراد المحصّل'],['_left','إجمالي المتبقي']]}];
 const TABS=[...T.map(c=>[c.k,c.t]),['search','البحث'],['reports','التقارير'],['lists','القوائم'],['users','المستخدمون'],['audit','سجل التعديلات']];
 let cur='treasury',ed=null;
 
@@ -174,11 +175,11 @@ function dataTab(c){
   if(!o.d&&c.f[0][0]==='d')return alert('اختر التاريخ');
   const e=c.chk&&c.chk(o);if(e)return alert(e);
   $('#ok').disabled=true;
-  try{if(ed)await dbUpd(ed,o);else await dbIns(c.k,o)}catch(x){$('#ok').disabled=false;return fail(x)}
-  $('#ok').disabled=false;clr();draw(c)};
+  let nid=null;try{if(ed){const old=D(c.k).find(x=>x.id===ed);if(old&&old.alloc)o.alloc=old.alloc;await dbUpd(ed,o)}else nid=await dbIns(c.k,o)}catch(x){$('#ok').disabled=false;return fail(x)}
+  $('#ok').disabled=false;clr();draw(c);if(nid&&c.k==='cheques'&&norm(o.status)!=='مرتجع')allocUI(nid)};
  $('#cx').onclick=clr;
  $('#tb').onclick=e=>{
-  const eid=e.target.dataset.e,did=e.target.dataset.d,rid=e.target.dataset.r;if(rid)routeUI(rid);
+  const eid=e.target.dataset.e,did=e.target.dataset.d,rid=e.target.dataset.r,aid=e.target.dataset.a;if(rid)routeUI(rid);if(aid)allocUI(aid);
   if(eid){const r=D(c.k).find(x=>x.id===eid);if(!r)return;c.f.forEach(([k,,t])=>$('#f_'+k).value=t==='num'&&!r[k]?'':(r[k]??''));ed=eid;$('#ok').textContent='حفظ التعديل';$('#cx').hidden=false;scrollTo(0,0)}
   if(did&&confirm('حذف السطر نهائيًا؟ سيختفي عند كل المستخدمين.'))dbDel(did).then(()=>draw(c)).catch(fail)};
  $('#tb').onchange=e=>{const o=e.target.dataset.o;if(o){S.opts=S.opts||{};S.opts[o]=e.target.checked;setS('opts',S.opts);draw(c)}};
@@ -188,7 +189,7 @@ function draw(c){
  const rows=[...D(c.k)].sort((a,b)=>String(a[c.order]).localeCompare(String(b[c.order]))||a._t-b._t);
  c.calc&&c.calc(rows);
  const cols=[...c.f.map(([k,l,t])=>[k,l,t==='num']),...(c.x||[])];
- $('#tb').innerHTML=(c.k==='cheques'?bankBox()+dueBox():'')+`<table><tr>${cols.map(x=>`<th>${x[1]}</th>`).join('')}<th class="act"></th></tr>${rows.map(r=>`<tr>${cols.map(([k,l,n])=>`<td data-label="${esc(l)}">${n?fmt(r[k]):esc(r[k])}</td>`).join('')}<td class="act">${CANW()?`<button class="l" data-e="${r.id}">تعديل</button> `:''}${CANW()&&c.k==='expenses'?`<button data-r="${r.id}">إضافة</button> `:''}${ADMIN()?`<button class="l" data-d="${r.id}">حذف</button>`:''}</td></tr>`).join('')}</table>`+(c.tot||[]).map(([k,l])=>`<div class="tot">${l}: ${fmt(sum(rows,r=>r[k]))}</div>`).join('')+(c.k==='cheques'?bankStmt():'')}
+ $('#tb').innerHTML=(c.k==='cheques'?bankBox()+dueBox():'')+`<table><tr>${cols.map(x=>`<th>${x[1]}</th>`).join('')}<th class="act"></th></tr>${rows.map(r=>`<tr>${cols.map(([k,l,n])=>`<td data-label="${esc(l)}">${n?fmt(r[k]):esc(r[k])}</td>`).join('')}<td class="act">${CANW()?`<button class="l" data-e="${r.id}">تعديل</button> `:''}${CANW()&&c.k==='expenses'?`<button data-r="${r.id}">إضافة</button> `:''}${CANW()&&c.k==='cheques'?`<button data-a="${r.id}">توزيع</button> `:''}${ADMIN()?`<button class="l" data-d="${r.id}">حذف</button>`:''}</td></tr>`).join('')}</table>`+(c.tot||[]).map(([k,l])=>`<div class="tot">${l}: ${fmt(sum(rows,r=>r[k]))}</div>`).join('')+(c.k==='cheques'?bankStmt():'')+(c.k==='assign'?assignNote():'')}
 
 function bankMoves(){
  const o=S.opts||{},m=[];
@@ -232,7 +233,11 @@ function reportsTab(){
  const asg=D('assign').map(a=>{const sp=sum(tr.filter(r=>r.project===a.project),r=>r.outflow);return {v:[a.project,a.client,a.value,sp,a.value-sp]}});
  const em=[...new Set(D('custody').map(r=>r.emp))].sort(),cu=em.map(e=>{const a=sum(D('custody').filter(r=>r.emp===e),r=>r.received),b=sum(D('custody').filter(r=>r.emp===e),r=>r.settled);return {v:[e,a,b,a-b]}});
  const bk=[...new Set(D('cheques').map(r=>r.bank))].sort().map(b=>({v:[b||'-',sum(D('cheques').filter(r=>r.bank===b),r=>r.amount)]}));
- $('#main').innerHTML=`<h3>كشف المقاولين والموردين</h3>${tbl(['المقاول / المورد','إجمالي المستخلصات','المدفوع','المتبقي'],con)}<h3>مصروفات المشاريع حسب البند</h3>${tbl(['البند',...pj,'الإجمالي'],piv)}<h3>المشاريع وجهات الإسناد</h3>${tbl(['المشروع','جهة الإسناد','قيمة المشروع','المصروفات','المتبقي من قيمة المشروع'],asg)}<h3>أرصدة العهد</h3>${tbl(['الموظف','عهدة مستلمة','مصروفات مُسوّاة','المتبقي في العهدة'],cu)}<h3>الشيكات حسب البنك</h3>${tbl(['البنك','إجمالي الشيكات'],bk)}<h3>رصيد البنك</h3>${bankBox().replace(/<div class="note act">[\s\S]*$/,'')}`}
+ const rev=revByProject(),rp=[...new Set([...Object.keys(rev),...D('assign').map(a=>a.project)])].filter(Boolean).sort();
+ const rv=rp.map(p=>{const val=sum(D('assign').filter(a=>a.project===p),a=>a.value),sp=sum(tr.filter(r=>r.project===p),r=>r.outflow),rc=rev[p]||0;return {v:[p,rc,val,val-rc,sp,rc-sp]}});
+ rv.push({s:1,v:['الإجمالي',...[1,2,3,4,5].map(i=>sum(rv,r=>r.v[i]))]});
+ const rd=[];D('cheques').filter(okChq).forEach(c=>(c.alloc||[]).forEach(a=>rd.push({d:c.d,v:[c.d,c.name,a.project,a.amount]})));rd.sort((a,b)=>String(a.d).localeCompare(String(b.d)));
+ $('#main').innerHTML=`<h3>كشف المقاولين والموردين</h3>${tbl(['المقاول / المورد','إجمالي المستخلصات','المدفوع','المتبقي'],con)}<h3>مصروفات المشاريع حسب البند</h3>${tbl(['البند',...pj,'الإجمالي'],piv)}<h3>المشاريع وجهات الإسناد</h3>${tbl(['المشروع','جهة الإسناد','قيمة المشروع','المصروفات','المتبقي من قيمة المشروع'],asg)}<h3>إيراد المشاريع (من توزيع شيكات حساب البنك)</h3>${tbl(['المشروع','الإيراد المحصّل','قيمة المشروع','المتبقي من القيمة','مصروفات الخزينة','الصافي (إيراد - مصروفات)'],rv)}<h3>تفاصيل الأجزاء الموزّعة من الشيكات</h3>${tbl(['تاريخ الشيك','الشيك','المشروع','المبلغ'],rd)}<h3>أرصدة العهد</h3>${tbl(['الموظف','عهدة مستلمة','مصروفات مُسوّاة','المتبقي في العهدة'],cu)}<h3>الشيكات حسب البنك</h3>${tbl(['البنك','إجمالي الشيكات'],bk)}<h3>رصيد البنك</h3>${bankBox().replace(/<div class="note act">[\s\S]*$/,'')}`}
 
 
 function listsTab(){
@@ -305,6 +310,31 @@ function toExpense(k,x){
  else return null;
  if(!amt)return null;
  return {d:x.d||(x.month?x.month+'-01':today()),descr:descr||'بدون بيان',project:x.project||'',item:x.item||'',party:x.party||'',amount:amt,note:note}}
+const okChq=r=>norm(r.status)!=='مرتجع';
+const allocSum=r=>(r.alloc||[]).reduce((a,x)=>a+N(x.amount),0);
+function revByProject(){const m={};D('cheques').forEach(r=>{if(!okChq(r))return;(r.alloc||[]).forEach(a=>{if(a.project)m[a.project]=(m[a.project]||0)+N(a.amount)})});return m}
+function assignNote(){const m=revByProject(),have=new Set(D('assign').map(a=>a.project)),miss=Object.keys(m).filter(p=>!have.has(p));
+ return miss.length?'<div class="note">إيراد موزَّع على مشاريع مش مسجلة في الجدول: '+miss.map(p=>esc(p)+' ('+fmt(m[p])+')').join('، ')+'</div>':''}
+function allocUI(id){
+ const r=D('cheques').find(x=>x.id===id);if(!r)return;
+ const L=(r.alloc||[]).map(a=>({project:a.project,amount:a.amount}));if(!L.length)L.push({project:'',amount:r.amount});
+ const m=document.createElement('div');m.className='modal';document.body.appendChild(m);
+ const tot=()=>L.reduce((a,x)=>a+N(x.amount),0),upd=()=>{const t=tot();$('#al_t').textContent='موزّع: '+fmt(t)+'  |  المتبقي: '+fmt(r.amount-t)};
+ const paint=()=>{m.innerHTML=`<div><h3>توزيع الشيك على المشاريع</h3><p class="note">${esc(r.name)} - ${fmt(r.amount)}</p><table>${'<tr><th>المشروع</th><th>المبلغ</th><th></th></tr>'}${L.map((x,i)=>`<tr><td data-label="المشروع"><input list="dl_projects" data-i="${i}" data-f="project" value="${esc(x.project)}"></td><td data-label="المبلغ"><input inputmode="decimal" data-i="${i}" data-f="amount" value="${x.amount||''}"></td><td class="act"><button class="l" data-rm="${i}">شيل</button></td></tr>`).join('')}</table><div class="tot" id="al_t"></div><p><button class="l" id="al_add">+ إضافة جزء</button> <button id="al_ok">حفظ التوزيع</button> <button class="l" id="al_cx">إلغاء</button></p></div>`;upd()};
+ paint();
+ m.oninput=e=>{const i=e.target.dataset.i;if(i===undefined)return;L[i][e.target.dataset.f]=e.target.value;upd()};
+ m.onclick=async e=>{
+  const t=e.target;
+  if(t===m||t.id==='al_cx')return m.remove();
+  if(t.dataset.rm!==undefined){L.splice(+t.dataset.rm,1);paint();return}
+  if(t.id==='al_add'){L.push({project:'',amount:Math.max(0,r.amount-tot())});paint();return}
+  if(t.id==='al_ok'){
+   const A=L.map(x=>({project:String(x.project).trim(),amount:N(x.amount)})).filter(x=>x.project||x.amount);
+   if(A.some(x=>!x.project||x.amount<=0))return alert('كل جزء لازم له مشروع ومبلغ أكبر من صفر');
+   if(A.reduce((a,x)=>a+x.amount,0)>r.amount+0.005)return alert('مجموع الأجزاء أكبر من قيمة الشيك');
+   const c=T.find(x=>x.k==='cheques'),o={};for(const [k] of c.f)o[k]=r[k]??'';o.alloc=A;
+   t.disabled=true;try{await dbUpd(id,o)}catch(x){t.disabled=false;return fail(x)}
+   m.remove();if($('#tb'))draw(c)}}}
 // ---------- الدخول والتشغيل ----------
 function loginUI(){
  $('#nav').innerHTML='';$('#bk').hidden=true;$('#who').textContent='';$('#out').hidden=true;$('#ren').hidden=true;$('#exp').hidden=true;$('#impl').hidden=true;$('#st').textContent='';
