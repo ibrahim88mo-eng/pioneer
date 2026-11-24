@@ -128,7 +128,7 @@ function live(){
 function refreshView(){const c=T.find(t=>t.k===cur);if(c&&$('#tb'))draw(c);else if(cur==='reports')reportsTab();else if(cur==='search'&&$('#q')&&$('#q').oninput)$('#q').oninput()}
 
 const T=[
-{k:'expenses',t:'المصروفات',order:'d',f:[['d','التاريخ','date'],['descr','البيان','text'],['amount','المبلغ','num'],['note','ملاحظات','text']],
+{k:'expenses',t:'المصروفات',order:'d',f:[['d','التاريخ','date'],['descr','البيان','text'],['project','المشروع','projects'],['item','البند','items'],['party','الجهة (مقاول/مورد)','parties'],['amount','المبلغ','num'],['note','ملاحظات','text']],
  chk:r=>(!r.descr||!r.amount)&&'اكتب البيان والمبلغ',tot:[['amount','إجمالي المصروفات (غير الموجّهة)']]},
 {k:'treasury',t:'الخزينة',order:'d',f:[['d','التاريخ','date'],['descr','البيان','text'],['project','المشروع','projects'],['item','البند','items'],['party','الجهة (مقاول/مورد)','parties'],['inflow','وارد','num'],['outflow','منصرف','num']],
  x:[['_bal','الرصيد',1]],calc:r=>{let b=0;r.forEach(x=>{b+=x.inflow-x.outflow;x._bal=b})},chk:r=>!(r.inflow||r.outflow)&&'اكتب مبلغ في وارد أو منصرف',
@@ -267,11 +267,11 @@ const RT={treasury:{amt:'outflow',txt:'descr'},custody:{amt:'settled',txt:'descr
 function routeUI(id){
  const e=D('expenses').find(x=>x.id===id);if(!e)return;
  const m=document.createElement('div');m.className='modal';
- m.innerHTML=`<div><h3>إضافة المصروف إلى مكانه الصحيح</h3><p class="note">${esc(e.descr)} - ${fmt(e.amount)}${e.note?' ('+esc(e.note)+')':''}</p><label>إضافة إلى<select id="rt_dest">${T.filter(c=>RT[c.k]).map(c=>`<option value="${c.k}">${c.t}</option>`).join('')}</select></label><div class="form" id="rtf"></div><p><button id="rt_ok">تأكيد الإضافة</button> <button class="l" id="rt_cx">إلغاء</button></p></div>`;
+ m.innerHTML=`<div><h3>إضافة المصروف إلى مكانه الصحيح</h3><p class="note">${esc(e.descr)}${e.project?' - '+esc(e.project):''} - ${fmt(e.amount)}${e.note?' ('+esc(e.note)+')':''}</p><label>إضافة إلى<select id="rt_dest">${T.filter(c=>RT[c.k]).map(c=>`<option value="${c.k}">${c.t}</option>`).join('')}</select></label><div class="form" id="rtf"></div><p><button id="rt_ok">تأكيد الإضافة</button> <button class="l" id="rt_cx">إلغاء</button></p></div>`;
  document.body.appendChild(m);
  const fill=()=>{const c=T.find(x=>x.k===$('#rt_dest').value),g=RT[c.k];
   $('#rtf').innerHTML=c.f.map(([k,l,t])=>{
-   const v=k==='d'?e.d:k==='month'?String(e.d||today()).slice(0,7):k===g.txt?[e.descr,e.note].filter(Boolean).join(' - '):k===g.amt?e.amount:'';
+   const v=k==='d'?e.d:k==='month'?String(e.d||today()).slice(0,7):k==='project'?(e.project||''):k==='item'?(e.item||''):k==='party'?(e.party||''):k===g.txt?[e.descr,e.note].filter(Boolean).join(' - '):k===g.amt?e.amount:'';
    return `<label>${l}<input id="r_${k}" value="${esc(v)}" ${t==='date'||t==='month'||t==='date0'?`type="${t==='date0'?'date':t}"`:t==='num'?'inputmode="decimal"':S.lists[t]?`list="dl_${t}"`:''}></label>`}).join('')};
  $('#rt_dest').onchange=fill;fill();
  $('#rt_cx').onclick=()=>m.remove();m.onclick=ev=>{if(ev.target===m)m.remove()};
@@ -282,9 +282,20 @@ function routeUI(id){
   const er=c.chk&&c.chk(o);if(er)return alert(er);
   $('#rt_ok').disabled=true;
   try{await dbIns(c.k,o)}catch(x){$('#rt_ok').disabled=false;return fail(x)}
-  try{await dbDel(e.id)}catch(x){try{await dbUpd(e.id,{d:e.d,descr:e.descr,amount:e.amount,note:e.note||'',moved:c.k})}catch(y){alert('اتسجل في «'+c.t+'» لكن ما اتشالش من المصروفات: '+((y&&y.message)||y))}}
+  try{await dbDel(e.id)}catch(x){try{await dbUpd(e.id,{d:e.d,descr:e.descr,amount:e.amount,note:e.note||'',project:e.project||'',item:e.item||'',party:e.party||'',moved:c.k})}catch(y){alert('اتسجل في «'+c.t+'» لكن ما اتشالش من المصروفات: '+((y&&y.message)||y))}}
   m.remove();const ec=T.find(x=>x.k==='expenses');if($('#tb'))draw(ec)}}
 
+function toExpense(k,x){
+ const n=v=>+v||0;let amt=0,descr='',note='من '+kn(k);
+ if(k==='treasury'){amt=n(x.outflow)||n(x.inflow);descr=x.descr||'';if(!n(x.outflow)&&n(x.inflow))note+=' (وارد)'}
+ else if(k==='invoices'){amt=n(x.amount);descr=x.descr||''}
+ else if(k==='custody'){amt=n(x.settled)||n(x.received);descr=x.descr||'';note+=' - '+(x.emp||'')+(!n(x.settled)&&n(x.received)?' (عهدة مستلمة)':'')}
+ else if(k==='payroll'){amt=n(x.basic)+n(x.allow)-n(x.deduct)-n(x.advance);descr='مرتب '+(x.name||'')+(x.job?' - '+x.job:'');note+=' - '+(x.month||'')}
+ else if(k==='cheques'){amt=n(x.amount);descr=x.name||'';note+=x.bank?' - '+x.bank:''}
+ else if(k==='expenses'){amt=n(x.amount);descr=x.descr||'';note=x.note||''}
+ else return null;
+ if(!amt)return null;
+ return {d:x.d||(x.month?x.month+'-01':today()),descr:descr||'بدون بيان',project:x.project||'',item:x.item||'',party:x.party||'',amount:amt,note:note}}
 // ---------- الدخول والتشغيل ----------
 function loginUI(){
  $('#nav').innerHTML='';$('#who').textContent='';$('#out').hidden=true;$('#ren').hidden=true;$('#exp').hidden=true;$('#impl').hidden=true;$('#st').textContent='';
@@ -331,11 +342,14 @@ $('#exp').onclick=()=>{
 $('#imp').onchange=e=>{const f=e.target.files[0];e.target.value='';if(!f)return;const r=new FileReader();
  r.onload=async()=>{try{
   const o=JSON.parse(r.result);if(!o.data)throw 0;
-  const rows=[];KINDS.forEach(k=>(o.data[k]||[]).forEach(x=>{const d={};for(const p in x)if(p!=='id'&&p[0]!=='_')d[p]=x[p];rows.push({kind:k,data:d})}));
-  if(!confirm('سيتم إضافة '+rows.length+' سجل من النسخة إلى البيانات المشتركة (لن يُحذف شيء). متأكد؟'))return;
+  const toExp=cur==='expenses',rows=[];let skipped=0;
+  KINDS.forEach(k=>(o.data[k]||[]).forEach(x=>{const d={};for(const p in x)if(p!=='id'&&p[0]!=='_')d[p]=x[p];
+   if(!toExp){rows.push({kind:k,data:d});return}
+   const e=toExpense(k,d);if(e)rows.push({kind:'expenses',data:e});else skipped++}));
+  if(!confirm(toExp?'سيتم استيراد '+rows.length+' سجل كلهم في تاب «المصروفات» لتوجّههم بنفسك بعد كده'+(skipped?' (تخطّيت '+skipped+' سجل بدون مبلغ أو من قسم جهة الإسناد)':'')+'. لن يُحذف شيء. متأكد؟':'سيتم إضافة '+rows.length+' سجل من النسخة إلى البيانات المشتركة (لن يُحذف شيء). متأكد؟'))return;
   for(let i=0;i<rows.length;i+=500){const x=await sb.from('records').insert(rows.slice(i,i+500));if(x.error)throw x.error}
   if(o.lists){for(const k in o.lists)S.lists[k]=[...new Set([...(S.lists[k]||[]),...o.lists[k]])];await setS('lists',S.lists)}
-  await loadAll();show('treasury');alert('تم استيراد '+rows.length+' سجل')}catch(x){alert('تعذر الاستيراد: '+((x&&x.message)||'الملف غير صالح'))}};r.readAsText(f)};
+  await loadAll();show(toExp?'expenses':'treasury');alert('تم استيراد '+rows.length+' سجل')}catch(x){alert('تعذر الاستيراد: '+((x&&x.message)||'الملف غير صالح'))}};r.readAsText(f)};
 boot();
 
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
